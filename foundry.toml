@@ -2,5 +2,14 @@
 src = "src"
 out = "out"
 libs = ["lib"]
+solc_version = "0.8.20" 
+
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
+
+[dependencies]
+"@uniswap/v3-core" = "1.0.0"  # Ensure this version is used
+"@uniswap/v3-periphery" = "1.0.0"  # Ensure this version is used
+"@openzeppelin/contracts" = "4.5.0"  # Specify a version
+
+

@@ -3,8 +3,9 @@ pragma solidity ^0.8.13;
 
 import {BondingToken} from "./BToken.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "v2-periphery/interfaces/IUniswapV2Router02.sol";
-import "v2-core/interfaces/IUniswapV2Factory.sol";
+import "./interfaces/IPoolFactory.sol";
+import "./interfaces/IPoolRouter.sol";
+import {console} from "forge-std/Test.sol";
 
 contract BondingCurve {
     struct LiquidityPool {
@@ -30,18 +31,16 @@ contract BondingCurve {
 
     uint256 public constant MIN_RESERVE = 200000000 * 10 ** 18;
 
-    uint256 constant INITIAL_VIRTUAL_RESERVE = 212_118 * 10 ** 18; // 212,118 WAYE (in MIST)
-    uint256 constant INITIAL_VIRTUAL_SUPPLY = 1_000_000_000 * 10 ** 18; // 1.1 billion tokens in mist
-    uint256 constant SETUP_FEE = 1 ether;
-    address TOKEN_LISK = 0xac485391EB2d7D88253a7F1eF18C37f4242D1A24;
-
-    uint256 POOL_FINAL_LISKS_AMOUNT = 366255000000 * 10 ** 18;
+    uint256 constant INITIAL_VIRTUAL_RESERVE = 212_118 * 10 ** 18; // 212,118 LISK
+    uint256 constant INITIAL_VIRTUAL_SUPPLY = 1_000_000_000 * 10 ** 18; // 1.1 billion tokens in LISK
+    uint256 public constant SETUP_FEE = 300 * 10 ** 18; // 300 LISK
+    address public TOKEN_LISK = 0xac485391EB2d7D88253a7F1eF18C37f4242D1A24;
 
     uint256 constant BASIS_POINTS = 10000;
 
     //uniswap v2
-    IUniswapV2Router02 public uniswapRouter;
-    IUniswapV2Factory public uniswapFactory;
+    IPoolRouter public velodromeRouter;
+    IPoolFactory public velodromeFactory;
 
     error Unauthorized();
     error NotEnoughTokenInVault();
@@ -66,8 +65,8 @@ contract BondingCurve {
     constructor(address _router, address _factory, address ADMIN, address TREASURY) {
         ADMIN_ADDRESS = ADMIN;
         TREASURY_ADDRESS = TREASURY;
-        uniswapRouter = IUniswapV2Router02(_router);
-        uniswapFactory = IUniswapV2Factory(_factory);
+        velodromeRouter = IPoolRouter(_router);
+        velodromeFactory = IPoolFactory(_factory);
     }
 
     modifier onlyAdmin() {
@@ -92,7 +91,7 @@ contract BondingCurve {
                 realReserveBalance: 0,
                 realTokenBalance: totalSupply,
                 lpCreationStarted: false,
-                lpCreated: true,
+                lpCreated: false,
                 feePercentage: 100,
                 feeBalance: 0,
                 currentPrice: INITIAL_VIRTUAL_RESERVE * BASIS_POINTS / INITIAL_VIRTUAL_SUPPLY
@@ -129,13 +128,14 @@ contract BondingCurve {
         // Calculate initial tokens to receive
         uint256 tokensOut;
 
-        uint256 initialAmt = calculateOutputTokens(poolId, reserveAmount);
-        require(initialAmt >= minTokenOut, "insufficient liq");
+        uint256 initialAmtOfTokens = calculateOutputTokens(poolId, reserveAmount);
+        require(initialAmtOfTokens >= minTokenOut, "insufficient liq");
 
-        uint256 remainingSupply = pool.realTokenBalance - initialAmt;
+        uint256 remainingSupply = pool.realTokenBalance - initialAmtOfTokens;
         if (remainingSupply < MIN_RESERVE) {
             // calculate how many tokens we can actually buy to the minimum threshold of a pool
             tokensOut = pool.realTokenBalance - MIN_RESERVE;
+
             //calculate the reserve currency
             uint256 k = INITIAL_VIRTUAL_RESERVE * INITIAL_VIRTUAL_SUPPLY;
             uint256 newTokenSupply = pool.virtualTokenSupply - tokensOut;
@@ -150,8 +150,9 @@ contract BondingCurve {
             if (totalExcess > 0) {
                 // (bool success,) = payable(address(msg.sender)).call{value: totalExcess}("");
                 // require(success, "transfer failed");
-        IERC20(TOKEN_LISK).transfer(msg.sender, totalExcess);
+                IERC20(TOKEN_LISK).transfer(msg.sender, totalExcess);
             }
+            paymentAfterFee = actualReserveNeeded;
 
             // // Update virtual reserves with actual amounts
             pool.virtualReserve = pool.virtualReserve + actualReserveNeeded;
@@ -159,7 +160,7 @@ contract BondingCurve {
             pool.lpCreationStarted = true;
             emit BondingCurveFinished(poolId);
         } else {
-            tokensOut = initialAmt;
+            tokensOut = initialAmtOfTokens;
             pool.virtualReserve = pool.virtualReserve + paymentAfterFee;
             pool.virtualTokenSupply = pool.virtualTokenSupply - tokensOut;
         }
@@ -168,7 +169,7 @@ contract BondingCurve {
         pool.currentPrice = getTokenPrice(poolId);
 
         // update real balance
-        pool.realReserveBalance = pool.realReserveBalance + reserveAmount;
+        pool.realReserveBalance = pool.realReserveBalance + paymentAfterFee;
         pool.realTokenBalance = pool.realTokenBalance - tokensOut;
 
         // send fee to pool creator
@@ -210,18 +211,12 @@ contract BondingCurve {
         // user sends the token to the pool
         BondingToken(pool.token).transferFrom(msg.sender, address(this), tokenAmount);
 
-        // pool creator is credited with the sell fee
         // send fee to pool creator
-        // (bool _success,) = payable(pool.creator).call{value: feeAmt}("");
-        // require(_success, "transfer failed");
-        // sends the LISK (Native token) to user
-        // (bool success,) = payable(address(msg.sender)).call{value: reserveAmtAfterFees}("");
-        // require(success, "transfer failed");
+        // seller gets their LISK token
         IERC20(TOKEN_LISK).transfer(pool.creator, feeAmt);
         IERC20(TOKEN_LISK).transfer(msg.sender, reserveAmtAfterFees);
     }
 
-    //@todo migrate pool from here to integrated exchange service and close pool
     function migratePool(uint256 poolId) external {
         LiquidityPool storage pool = pools[poolId];
         require(pool.creator == msg.sender, "Not creator");
@@ -274,25 +269,17 @@ contract BondingCurve {
     function createPoolAndAddLiquidity(address tokenA, address tokenB, uint256 amountA, uint256 amountB) internal {
         require(amountA > 0 && amountB > 0, "Invalid amounts");
 
-        // Check if the pair exists
-        address pair = uniswapFactory.getPair(tokenA, tokenB);
-
-        if (pair == address(0)) {
-            // Pair does not exist, Uniswap will create it when adding liquidity
-        }
-
-        // Transfer tokens to this contract
-        IERC20(tokenA).transferFrom(msg.sender, address(this), amountA);
-        IERC20(tokenB).transferFrom(msg.sender, address(this), amountB);
-
         // Approve Uniswap router to spend the tokens
-        IERC20(tokenA).approve(address(uniswapRouter), amountA);
-        IERC20(tokenB).approve(address(uniswapRouter), amountB);
+        IERC20(tokenA).approve(address(velodromeRouter), amountA);
+        IERC20(tokenB).approve(address(velodromeRouter), amountB);
+
+        IPoolFactory(velodromeFactory).createPool(tokenA, tokenB, false);
 
         // Add liquidity to Uniswap V2 (creates the pool if it doesn't exist)
-        (uint256 amountADesired, uint256 amountBDesired, uint256 liquidity) = uniswapRouter.addLiquidity(
+        (,, uint256 liquidity) = velodromeRouter.addLiquidity(
             tokenA,
             tokenB,
+            false,
             amountA,
             amountB,
             1, // Min tokenA amount (set to avoid slippage)
@@ -303,12 +290,4 @@ contract BondingCurve {
 
         require(liquidity > 0, "Liquidity addition failed");
     }
-
-    //@todo function for pool creators to withdraw fees charged on every buy and sell
-
-    //@todo finalize if admin should pull treasury fee accumulated over time
-    // function withdraw_FEE() external {
-    //     (bool success,) = TREASURY_ADDRESS.call{value: address(this).balance}("");
-    //     require(success, "transfer failed");
-    // }
 }

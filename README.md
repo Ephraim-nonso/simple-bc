@@ -1,17 +1,20 @@
-## Foundry
+## Simple Constant Product Bonding Curve Contract
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+**A simple constant product bonding curve maintains a fixed product of token reserves, ensuring a continuous supply-demand relationship. As users buy, prices increase; as they sell, prices decrease. Governed by x * y = k, it ensures automatic price discovery and liquidity without external market makers.**
 
-Foundry consists of:
+BondingCurve consists of the following functions:
 
--   **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
--   **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
--   **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
--   **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+-   **createPool**: Pay setup fee to provide token details to create new pool of your token.
+-   **buyTokens**: Buy tokens from the pool. Provide pool id, reserve amount and min amount out.
+-   **sellTokens**: Sell tokens back to the token pool. Provide pool id, token amount and min amount out of reserve.
+-   **migratePool**: Creator migrate the MIN_RESERVE_AMOUNT and LISK to the Velodrome exchange
+-   **calculateOutputReserve**: Get reserve amount out given a pool id and token amount
+-   **calculateOutputTokens**: Get tokens amount out given a pool id and reserve amount
+-   **getPoolCurrentPrice**: Get the current price of the pool token
+-   **getTokenPrice**: Get token price
+-   **createPoolAndAddLiquidity**: Internal function to create pool on velodrome and migrate tokens
 
-## Documentation
 
-https://book.getfoundry.sh/
 
 ## Usage
 
@@ -27,40 +30,20 @@ $ forge build
 $ forge test
 ```
 
-### Format
-
-```shell
-$ forge fmt
-```
-
 ### Gas Snapshots
 
 ```shell
 $ forge snapshot
 ```
 
-### Anvil
-
-```shell
-$ anvil
-```
-
 ### Deploy
 
+Add script file and setup to deploy.
+
 ```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
+$ forge script script/BondingCurve.s.sol:BondingCurveScript --rpc-url <your_rpc_url> --private-key <your_private_key>
 ```
 
-### Cast
-
-```shell
-$ cast <subcommand>
-```
-
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
+```md
+For testing purposes only. This contract requires much more test to make production-ready.
 ```

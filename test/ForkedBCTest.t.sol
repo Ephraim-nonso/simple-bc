@@ -80,7 +80,6 @@ contract BondingCurveTest is Test {
         sellTokens(buyer1, IERC20(token).balanceOf(buyer1), 0, token);
     }
 
-
     function createPool(address user, string memory name, string memory symbol) internal {
         vm.startPrank(user);
         IERC20(bcContract.TOKEN_LISKTESTER()).approve(address(bcContract), bcContract.SETUP_FEE());

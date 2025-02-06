@@ -1,6 +1,8 @@
 # Compiler files
 cache/
 out/
+broadcast/
+lib/openzeppelin-contracts
 
 # Ignores development broadcast logs
 !/broadcast

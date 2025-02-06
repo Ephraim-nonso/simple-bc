@@ -31,7 +31,3 @@ contract ExchangeCurveScript is Script {
         vm.stopBroadcast();
     }
 }
-
-// lib/superchain-contracts/src/pools/Pool.sol
-// lib/superchain-contracts/src/pools/PoolFactory.sol
-// lib/superchain-contracts/src/Router.sol

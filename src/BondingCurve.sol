@@ -5,7 +5,6 @@ import {BondingToken} from "./BToken.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "./interfaces/IPoolFactory.sol";
 import "./interfaces/IPoolRouter.sol";
-import {console} from "forge-std/Test.sol";
 
 contract BondingCurve {
     struct LiquidityPool {
@@ -24,9 +23,8 @@ contract BondingCurve {
     }
 
     LiquidityPool[] public pools;
-    uint256 poolCount;
+    uint256 public poolCount;
 
-    address public immutable ADMIN_ADDRESS;
     address public immutable TREASURY_ADDRESS;
 
     uint256 public constant MIN_RESERVE = 200000000 * 10 ** 18;
@@ -34,7 +32,8 @@ contract BondingCurve {
     uint256 constant INITIAL_VIRTUAL_RESERVE = 212_118 * 10 ** 18; // 212,118 LISK
     uint256 constant INITIAL_VIRTUAL_SUPPLY = 1_000_000_000 * 10 ** 18; // 1.1 billion tokens in LISK
     uint256 public constant SETUP_FEE = 300 * 10 ** 18; // 300 LISK
-    address public TOKEN_LISK = 0xac485391EB2d7D88253a7F1eF18C37f4242D1A24;
+    // address public TOKEN_LISK = 0xac485391EB2d7D88253a7F1eF18C37f4242D1A24;
+    address public TOKEN_LISKTESTER = 0x7879125Ed361620DA76C7E55924D95Bd7c11E086;
 
     uint256 constant BASIS_POINTS = 10000;
 
@@ -62,20 +61,26 @@ contract BondingCurve {
     event PoolCreated(address token0, address token1, uint24 fee, address pool);
     event LiquidityAdded(uint256 tokenId, uint256 liquidity);
 
-    constructor(address _router, address _factory, address ADMIN, address TREASURY) {
-        ADMIN_ADDRESS = ADMIN;
+    constructor(address _router, address _factory, address TREASURY) {
         TREASURY_ADDRESS = TREASURY;
         velodromeRouter = IPoolRouter(_router);
         velodromeFactory = IPoolFactory(_factory);
     }
 
     modifier onlyAdmin() {
-        require(msg.sender == ADMIN_ADDRESS, "Not admin");
+        require(TREASURY_ADDRESS == msg.sender);
         _;
     }
 
+    function setRouter(address _router) external onlyAdmin {
+        velodromeRouter = IPoolRouter(_router);
+    }
+
+    function setFactory(address _factory) external onlyAdmin {
+        velodromeFactory = IPoolFactory(_factory);
+    }
+
     function createPool(string memory tokenName, string memory tokenSymbol) external payable returns (uint256) {
-        // require(msg.value == SETUP_FEE, "setup fee not provided");
         uint256 poolIndex = poolCount;
 
         BondingToken token = new BondingToken(tokenName, tokenSymbol, address(this));
@@ -98,12 +103,8 @@ contract BondingCurve {
             })
         );
 
-        // send setup fee to treasury
-        // (bool _success,) = payable(TREASURY_ADDRESS).call{value: msg.value}("");
-        // require(_success, "transfer failed");
-
         // send setup fee to treasury in form of lisk
-        IERC20(TOKEN_LISK).transferFrom(msg.sender, TREASURY_ADDRESS, SETUP_FEE);
+        IERC20(TOKEN_LISKTESTER).transferFrom(msg.sender, TREASURY_ADDRESS, SETUP_FEE);
 
         emit PoolCreated(poolIndex, INITIAL_VIRTUAL_RESERVE, INITIAL_VIRTUAL_SUPPLY);
 
@@ -113,12 +114,10 @@ contract BondingCurve {
 
     function buyTokens(uint256 poolId, uint256 reserveAmount, uint256 minTokenOut) public payable {
         LiquidityPool storage pool = pools[poolId];
-        // require(msg.value > 0, "msg value is 0");
         require(reserveAmount > 0, "error Invalid amount");
-        // require(reserveAmount == msg.value, "error Invalid amount");
         require(!pool.lpCreationStarted, "Already started");
 
-        require(IERC20(TOKEN_LISK).transferFrom(msg.sender, address(this), reserveAmount), "failed to transfer");
+        require(IERC20(TOKEN_LISKTESTER).transferFrom(msg.sender, address(this), reserveAmount), "failed to transfer");
 
         // handle fees
         uint256 feeAmt = (reserveAmount * pool.feePercentage) / BASIS_POINTS;
@@ -148,9 +147,7 @@ contract BondingCurve {
             uint256 totalNeeded = actualReserveNeeded + feeAmt;
             uint256 totalExcess = reserveAmount - totalNeeded;
             if (totalExcess > 0) {
-                // (bool success,) = payable(address(msg.sender)).call{value: totalExcess}("");
-                // require(success, "transfer failed");
-                IERC20(TOKEN_LISK).transfer(msg.sender, totalExcess);
+                IERC20(TOKEN_LISKTESTER).transfer(msg.sender, totalExcess);
             }
             paymentAfterFee = actualReserveNeeded;
 
@@ -158,6 +155,7 @@ contract BondingCurve {
             pool.virtualReserve = pool.virtualReserve + actualReserveNeeded;
             pool.virtualTokenSupply = pool.virtualTokenSupply - tokensOut;
             pool.lpCreationStarted = true;
+
             emit BondingCurveFinished(poolId);
         } else {
             tokensOut = initialAmtOfTokens;
@@ -172,10 +170,11 @@ contract BondingCurve {
         pool.realReserveBalance = pool.realReserveBalance + paymentAfterFee;
         pool.realTokenBalance = pool.realTokenBalance - tokensOut;
 
-        // send fee to pool creator
-        // (bool _success,) = payable(pool.creator).call{value: feeAmt}("");
-        // require(_success, "transfer failed");
-        IERC20(TOKEN_LISK).transfer(pool.creator, feeAmt);
+        if (pool.lpCreationStarted) {
+            migratePool(poolId);
+        }
+
+        IERC20(TOKEN_LISKTESTER).transfer(pool.creator, feeAmt);
 
         // send purchased tokens to the user
         BondingToken(pool.token).transfer(msg.sender, tokensOut);
@@ -213,13 +212,12 @@ contract BondingCurve {
 
         // send fee to pool creator
         // seller gets their LISK token
-        IERC20(TOKEN_LISK).transfer(pool.creator, feeAmt);
-        IERC20(TOKEN_LISK).transfer(msg.sender, reserveAmtAfterFees);
+        IERC20(TOKEN_LISKTESTER).transfer(pool.creator, feeAmt);
+        IERC20(TOKEN_LISKTESTER).transfer(msg.sender, reserveAmtAfterFees);
     }
 
-    function migratePool(uint256 poolId) external {
+    function migratePool(uint256 poolId) internal {
         LiquidityPool storage pool = pools[poolId];
-        require(pool.creator == msg.sender, "Not creator");
         require(!pool.lpCreated, "Already created");
         require(pool.lpCreationStarted, "Not started");
         uint256 supply = pool.realTokenBalance;
@@ -228,7 +226,7 @@ contract BondingCurve {
         pool.lpCreated = true;
 
         // forward balance of pool to the integrated exchange (UNISWAP V2)
-        createPoolAndAddLiquidity(pool.token, TOKEN_LISK, supply, reserve);
+        createPoolAndAddLiquidity(pool.token, TOKEN_LISKTESTER, supply, reserve);
     }
 
     function calculateOutputReserve(uint256 poolId, uint256 tokenAmount) public view returns (uint256) {
@@ -289,5 +287,16 @@ contract BondingCurve {
         );
 
         require(liquidity > 0, "Liquidity addition failed");
+    }
+
+    function getAllExistingPools() external view returns (LiquidityPool[] memory allPools) {
+        uint256 length = pools.length;
+        allPools = new LiquidityPool[](length);
+        for (uint256 i = 0; i < length; i++) {
+            LiquidityPool memory pool = pools[i];
+            if (pool.token != address(0)) {
+                allPools[i] = pool;
+            }
+        }
     }
 }

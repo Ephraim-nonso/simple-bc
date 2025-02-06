@@ -117,6 +117,17 @@ interface IPoolRouter {
         uint256 deadline
     ) external returns (uint256 amountA, uint256 amountB, uint256 liquidity);
 
+    function addLiquidity(
+        address tokenA,
+        address tokenB,
+        uint256 amountADesired,
+        uint256 amountBDesired,
+        uint256 amountAMin,
+        uint256 amountBMin,
+        address to,
+        uint256 deadline
+    ) external returns (uint256 amountA, uint256 amountB, uint256 liquidity);
+
     /// @notice Add liquidity of a token and WETH (transferred as ETH) to a Pool
     /// @param token                .
     /// @param stable               True if pool is stable, false if volatile
